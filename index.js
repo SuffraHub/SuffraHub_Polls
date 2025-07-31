@@ -45,6 +45,28 @@ app.get('/poll-by-code/:token', (req, res) => {
   );
 });
 
+app.post('/createPoll', (req, res) => {
+  const { name, description, is_active, owner_id, company_id, valid_to } = req.body;
+
+  if (!name || !description || is_active === undefined || !owner_id || !company_id || !valid_to) {
+    return res.status(400).json({ message: 'Missing required fields' });
+  }
+
+  const query = `
+        INSERT INTO polls (name, description, is_active, owner_id, company_id, valid_to)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `;
+
+  connection.query(query, [name, description, is_active, owner_id, company_id, valid_to], (err, result) => {
+    if (err) {
+      console.error('MySQL error:', err);
+      return res.status(500).json({ message: 'Poll creation failed' });
+    }
+
+    return res.status(201).json({ message: 'Poll created successfully', pollId: result.insertId });
+  });
+});
+
 function generateToken() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
