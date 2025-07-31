@@ -45,6 +45,26 @@ app.get('/poll-by-code/:token', (req, res) => {
   );
 });
 
+app.get('/poll-by-id/:id', (req, res) => {
+  const { id } = req.params;
+
+  connection.query(
+    'SELECT * FROM polls WHERE id = ?',
+    [id],
+    (err, results) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      if (results.length === 0) {
+        return res.status(404).json({ error: 'Poll not found' });
+      }
+
+      res.json({ pollData: results[0] });
+    }
+  );
+});
+
 app.post('/createPoll', (req, res) => {
   const { name, description, is_active, owner_id, company_id, valid_to } = req.body;
 
