@@ -67,6 +67,45 @@ app.post('/createPoll', (req, res) => {
   });
 });
 
+app.post('/editPoll', (req, res) => {
+  const { pollId, name, description, is_active, owner_id, company_id, valid_to } = req.body;
+
+  // Walidacja
+  if (
+    !pollId ||
+    !name ||
+    !description ||
+    is_active === undefined ||
+    !owner_id ||
+    !company_id ||
+    !valid_to
+  ) {
+    return res.status(400).json({ message: 'Missing required fields' });
+  }
+
+  const query = `
+    UPDATE polls
+    SET name = ?, description = ?, is_active = ?, owner_id = ?, company_id = ?, valid_to = ?
+    WHERE id = ?
+  `;
+
+  const values = [name, description, is_active, owner_id, company_id, valid_to, pollId];
+
+  connection.query(query, values, (err, result) => {
+    if (err) {
+      console.error('MySQL error:', err);
+      return res.status(500).json({ message: 'Poll update failed' });
+    }
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Poll not found' });
+    }
+
+    return res.status(200).json({ message: 'Poll updated successfully' });
+  });
+});
+
+
 function generateToken() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
