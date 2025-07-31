@@ -45,6 +45,53 @@ app.get('/poll-by-code/:token', (req, res) => {
   );
 });
 
+function generateToken() {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
+
+app.post('/generate-tokens', async (req, res) => {
+  const { pollId, tokenQuantity } = req.body;
+
+  if (!pollId || !tokenQuantity || isNaN(tokenQuantity) || tokenQuantity <= 0) {
+    return res.status(400).json({ error: 'Invalid pollId or tokenQuantity' });
+  }
+
+  try {
+    connection.query('SELECT token FROM vote_tokens', (err, results) => {
+      if (err) {
+        console.error('DB error:', err);
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      const existingTokens = new Set(results.map(r => r.token));
+      const newTokens = new Set();
+
+      while (newTokens.size < tokenQuantity) {
+        const token = generateToken();
+        if (!existingTokens.has(token) && !newTokens.has(token)) {
+          newTokens.add(token);
+        }
+      }
+
+      const insertValues = Array.from(newTokens).map(token => [token, pollId]);
+
+      const insertQuery = 'INSERT INTO vote_tokens (token, poll_id) VALUES ?';
+      connection.query(insertQuery, [insertValues], (insertErr) => {
+        if (insertErr) {
+          console.error('Insert error:', insertErr);
+          return res.status(500).json({ error: 'Failed to insert tokens' });
+        }
+
+        res.status(201).json({ success: true, tokens: Array.from(newTokens), pollId: pollId });
+      });
+    });
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    res.status(500).json({ error: 'Unexpected server error' });
+  }
+});
+
+
 app.listen(port, () => {
   console.log(`Polls API listening on port ${port}`)
 })
