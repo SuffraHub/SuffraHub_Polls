@@ -48,6 +48,19 @@ app.get('/poll-by-code/:token', (req, res) => {
   );
 });
 
+function toDateTimeLocalString(date) {
+  const d = new Date(date);
+  const pad = (n) => n.toString().padStart(2, "0");
+
+  const year = d.getFullYear();
+  const month = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  const hours = pad(d.getHours());
+  const minutes = pad(d.getMinutes());
+
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 app.get('/poll-by-id/:id', (req, res) => {
   const { id } = req.params;
 
@@ -63,10 +76,14 @@ app.get('/poll-by-id/:id', (req, res) => {
         return res.status(404).json({ error: 'Poll not found' });
       }
 
-      res.json({ pollData: results[0] });
+      const poll = results[0];
+      poll.valid_to = toDateTimeLocalString(poll.valid_to);
+
+      res.json({ pollData: poll });
     }
   );
 });
+
 
 app.get('/poll-by-company/:company_id', (req, res) => {
   const { company_id } = req.params;
@@ -113,7 +130,7 @@ app.post('/createPoll', (req, res) => {
 });
 
 app.post('/editPoll', (req, res) => {
-  const { pollId, name, description, is_active, owner_id, company_id, valid_to } = req.body;
+  const { pollId, name, description, is_active, valid_to } = req.body;
 
   // Walidacja
   if (
@@ -121,8 +138,6 @@ app.post('/editPoll', (req, res) => {
     !name ||
     !description ||
     is_active === undefined ||
-    !owner_id ||
-    !company_id ||
     !valid_to
   ) {
     return res.status(400).json({ message: 'Missing required fields' });
@@ -130,11 +145,11 @@ app.post('/editPoll', (req, res) => {
 
   const query = `
     UPDATE polls
-    SET name = ?, description = ?, is_active = ?, owner_id = ?, company_id = ?, valid_to = ?
+    SET name = ?, description = ?, is_active = ?, valid_to = ?
     WHERE id = ?
   `;
 
-  const values = [name, description, is_active, owner_id, company_id, valid_to, pollId];
+  const values = [name, description, is_active, valid_to, pollId];
 
   connection.query(query, values, (err, result) => {
     if (err) {
