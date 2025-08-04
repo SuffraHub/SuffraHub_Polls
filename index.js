@@ -87,7 +87,7 @@ app.post('/createPoll', (req, res) => {
   });
 });
 
-app.post('/editPoll', (req, res) => {
+app.put('/editPoll', (req, res) => {
   const { pollId, name, description, is_active, owner_id, company_id, valid_to } = req.body;
 
   // Walidacja
