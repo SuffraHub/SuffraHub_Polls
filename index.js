@@ -1,6 +1,6 @@
 const express = require('express')
 const app = express()
-const port = 8001
+const port = 8005
 
 const cors = require('cors');
 
@@ -171,6 +171,41 @@ app.post('/generate-tokens', async (req, res) => {
     res.status(500).json({ error: 'Unexpected server error' });
   }
 });
+
+app.get('/tokens-by-poll/:pollId', (req, res) => {
+  const { pollId } = req.params;
+
+  const query = `
+    SELECT polls.name AS poll_name, token, used, used_at, generated_at
+    FROM vote_tokens
+    JOIN polls ON polls.id = vote_tokens.poll_id
+    WHERE poll_id = ?
+  `;
+
+  connection.query(query, [pollId], (err, results) => {
+    if (err) {
+      console.error('DB error:', err);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'No tokens found for this poll' });
+    }
+
+    const pollName = results[0].poll_name;
+    const tokens = results.map(row => ({
+      token: row.token,
+      used: row.used === 1,
+      used_at: row.used_at,
+      generated_at: row.generated_at,
+    }));
+
+    res.json({ pollId, pollName, tokens });
+  });
+});
+
+
+
 
 
 app.listen(port, () => {
