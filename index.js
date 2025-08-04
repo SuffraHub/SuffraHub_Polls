@@ -7,7 +7,10 @@ const cors = require('cors');
 require('dotenv').config();
 const mysql = require('mysql');
 
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:5173', // lub inny frontend origin
+  credentials: true,
+}));
 app.use(express.json());
 
 const connection = mysql.createConnection({
@@ -64,6 +67,28 @@ app.get('/poll-by-id/:id', (req, res) => {
     }
   );
 });
+
+app.get('/poll-by-company/:company_id', (req, res) => {
+  const { company_id } = req.params;
+
+  connection.query(
+    'SELECT id, name, is_active, valid_to FROM polls WHERE company_id = ? ORDER BY valid_to DESC',
+    [company_id],
+    (err, results) => {
+      if (err) {
+        console.error('Database error:', err);
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      if (!results || results.length === 0) {
+        return res.status(404).json({ error: 'No polls found for this company' });
+      }
+
+      res.json({ pollData: results });
+    }
+  );
+});
+
 
 app.post('/createPoll', (req, res) => {
   const { name, description, is_active, owner_id, company_id, valid_to } = req.body;
