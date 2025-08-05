@@ -230,7 +230,7 @@ app.get('/tokens-by-poll/:pollId', (req, res) => {
 
     if (results.length === 0) {
       return res.status(404).json({ error: 'No tokens found for this poll' });
-    }
+    }  
 
     const pollName = results[0].poll_name;
     const tokens = results.map(row => ({
