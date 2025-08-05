@@ -1,13 +1,16 @@
 const express = require('express')
 const app = express()
-const port = 8001
+const port = 8005
 
 const cors = require('cors');
 
 require('dotenv').config();
 const mysql = require('mysql');
 
-app.use(cors());
+app.use(cors({
+  origin: 'http://localhost:5173', // lub inny frontend origin
+  credentials: true,
+}));
 app.use(express.json());
 
 const connection = mysql.createConnection({
@@ -45,6 +48,19 @@ app.get('/poll-by-code/:token', (req, res) => {
   );
 });
 
+function toDateTimeLocalString(date) {
+  const d = new Date(date);
+  const pad = (n) => n.toString().padStart(2, "0");
+
+  const year = d.getFullYear();
+  const month = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  const hours = pad(d.getHours());
+  const minutes = pad(d.getMinutes());
+
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 app.get('/poll-by-id/:id', (req, res) => {
   const { id } = req.params;
 
@@ -60,10 +76,36 @@ app.get('/poll-by-id/:id', (req, res) => {
         return res.status(404).json({ error: 'Poll not found' });
       }
 
-      res.json({ pollData: results[0] });
+      const poll = results[0];
+      poll.valid_to = toDateTimeLocalString(poll.valid_to);
+
+      res.json({ pollData: poll });
     }
   );
 });
+
+
+app.get('/poll-by-company/:company_id', (req, res) => {
+  const { company_id } = req.params;
+
+  connection.query(
+    'SELECT id, name, is_active, valid_to FROM polls WHERE company_id = ? ORDER BY valid_to DESC',
+    [company_id],
+    (err, results) => {
+      if (err) {
+        console.error('Database error:', err);
+        return res.status(500).json({ error: 'Database error' });
+      }
+
+      if (!results || results.length === 0) {
+        return res.status(404).json({ error: 'No polls found for this company' });
+      }
+
+      res.json({ pollData: results });
+    }
+  );
+});
+
 
 app.post('/createPoll', (req, res) => {
   const { name, description, is_active, owner_id, company_id, valid_to } = req.body;
@@ -87,6 +129,7 @@ app.post('/createPoll', (req, res) => {
   });
 });
 
+
 app.put('/editPoll', (req, res) => {
   const { pollId, name, description, is_active, owner_id, company_id, valid_to } = req.body;
 
@@ -96,8 +139,6 @@ app.put('/editPoll', (req, res) => {
     !name ||
     !description ||
     is_active === undefined ||
-    !owner_id ||
-    !company_id ||
     !valid_to
   ) {
     return res.status(400).json({ message: 'Missing required fields' });
@@ -105,11 +146,11 @@ app.put('/editPoll', (req, res) => {
 
   const query = `
     UPDATE polls
-    SET name = ?, description = ?, is_active = ?, owner_id = ?, company_id = ?, valid_to = ?
+    SET name = ?, description = ?, is_active = ?, valid_to = ?
     WHERE id = ?
   `;
 
-  const values = [name, description, is_active, owner_id, company_id, valid_to, pollId];
+  const values = [name, description, is_active, valid_to, pollId];
 
   connection.query(query, values, (err, result) => {
     if (err) {
@@ -171,6 +212,120 @@ app.post('/generate-tokens', async (req, res) => {
     res.status(500).json({ error: 'Unexpected server error' });
   }
 });
+
+app.get('/tokens-by-poll/:pollId', (req, res) => {
+  const { pollId } = req.params;
+
+  const query = `
+    SELECT polls.name AS poll_name, token, used, used_at, generated_at
+    FROM vote_tokens
+    JOIN polls ON polls.id = vote_tokens.poll_id
+    WHERE poll_id = ?
+  `;
+
+  connection.query(query, [pollId], (err, results) => {
+    if (err) {
+      console.error('DB error:', err);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'No tokens found for this poll' });
+    }  
+
+    const pollName = results[0].poll_name;
+    const tokens = results.map(row => ({
+      token: row.token,
+      used: row.used === 1,
+      used_at: row.used_at,
+      generated_at: row.generated_at,
+    }));
+
+    res.json({ pollId, pollName, tokens });
+  });
+});
+
+app.get('/poll-report/:poll_id/:company_id', (req, res) => {
+  const { poll_id, company_id } = req.params;
+
+  if (!company_id) {
+    return res.status(400).json({ error: 'Missing company_id' });
+  }
+
+  connection.query(
+    'SELECT id, name, description, valid_to, company_id FROM polls WHERE id = ?',
+    [poll_id],
+    (err, pollResults) => {
+      if (err) return res.status(500).json({ error: 'Database error 1' });
+
+      if (pollResults.length === 0)
+        return res.status(404).json({ error: 'Poll not found' });
+
+      const poll = pollResults[0];
+
+      if (poll.company_id != company_id) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Get poll questions
+      connection.query(
+        `SELECT pq.id AS question_poll_id, q.question AS question_name
+         FROM poll_questions pq
+         JOIN questions q ON pq.question_id = q.id
+         WHERE pq.poll_id = ?`,
+        [poll_id],
+        (err, questionResults) => {
+          if (err) return res.status(500).json({ error: 'Database error 2', details: err.message });
+
+
+          if (questionResults.length === 0) {
+            return res.json({ poll, questions: [] });
+          }
+
+          const questionIds = questionResults.map(q => q.question_poll_id);
+
+          // Get vote counts per option
+          connection.query(
+            `SELECT 
+              v.question_poll_id,
+              o.label AS option_label,
+              COUNT(*) AS vote_count
+             FROM votes v
+             JOIN options o ON v.option_id = o.id
+             WHERE v.question_poll_id IN (?)
+             GROUP BY v.question_poll_id, v.option_id`,
+            [questionIds],
+            (err, voteResults) => {
+              if (err) return res.status(500).json({ error: 'Database error 3' });
+
+              const grouped = questionResults.map(q => {
+                const votesForQuestion = voteResults.filter(v => v.question_poll_id === q.question_poll_id);
+                const totalVotes = votesForQuestion.reduce((sum, v) => sum + v.vote_count, 0);
+
+                const results = votesForQuestion.map(v => ({
+                  label: v.option_label,
+                  count: v.vote_count,
+                  percentage: totalVotes > 0 ? Math.round((v.vote_count / totalVotes) * 100) : 0
+                }));
+
+                return {
+                  question: q.question_name,
+                  results,
+                  totalVotes
+                };
+              });
+
+              return res.json({ poll, questions: grouped });
+            }
+          );
+        }
+      );
+    }
+  );
+});
+
+
+
 
 
 app.listen(port, () => {
