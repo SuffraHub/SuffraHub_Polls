@@ -244,6 +244,85 @@ app.get('/tokens-by-poll/:pollId', (req, res) => {
   });
 });
 
+app.get('/poll-report/:poll_id/:company_id', (req, res) => {
+  const { poll_id, company_id } = req.params;
+
+  if (!company_id) {
+    return res.status(400).json({ error: 'Missing company_id' });
+  }
+
+  connection.query(
+    'SELECT id, name, description, valid_to, company_id FROM polls WHERE id = ?',
+    [poll_id],
+    (err, pollResults) => {
+      if (err) return res.status(500).json({ error: 'Database error 1' });
+
+      if (pollResults.length === 0)
+        return res.status(404).json({ error: 'Poll not found' });
+
+      const poll = pollResults[0];
+
+      if (poll.company_id != company_id) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      // Get poll questions
+      connection.query(
+        `SELECT pq.id AS question_poll_id, q.question AS question_name
+         FROM poll_questions pq
+         JOIN questions q ON pq.question_id = q.id
+         WHERE pq.poll_id = ?`,
+        [poll_id],
+        (err, questionResults) => {
+          if (err) return res.status(500).json({ error: 'Database error 2', details: err.message });
+
+
+          if (questionResults.length === 0) {
+            return res.json({ poll, questions: [] });
+          }
+
+          const questionIds = questionResults.map(q => q.question_poll_id);
+
+          // Get vote counts per option
+          connection.query(
+            `SELECT 
+              v.question_poll_id,
+              o.label AS option_label,
+              COUNT(*) AS vote_count
+             FROM votes v
+             JOIN options o ON v.option_id = o.id
+             WHERE v.question_poll_id IN (?)
+             GROUP BY v.question_poll_id, v.option_id`,
+            [questionIds],
+            (err, voteResults) => {
+              if (err) return res.status(500).json({ error: 'Database error 3' });
+
+              const grouped = questionResults.map(q => {
+                const votesForQuestion = voteResults.filter(v => v.question_poll_id === q.question_poll_id);
+                const totalVotes = votesForQuestion.reduce((sum, v) => sum + v.vote_count, 0);
+
+                const results = votesForQuestion.map(v => ({
+                  label: v.option_label,
+                  count: v.vote_count,
+                  percentage: totalVotes > 0 ? Math.round((v.vote_count / totalVotes) * 100) : 0
+                }));
+
+                return {
+                  question: q.question_name,
+                  results,
+                  totalVotes
+                };
+              });
+
+              return res.json({ poll, questions: grouped });
+            }
+          );
+        }
+      );
+    }
+  );
+});
+
 
 
 
