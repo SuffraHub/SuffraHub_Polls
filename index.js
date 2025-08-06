@@ -256,10 +256,14 @@ app.get('/poll-report/:poll_id/:company_id', (req, res) => {
     'SELECT id, name, description, valid_to, company_id FROM polls WHERE id = ?',
     [poll_id],
     (err, pollResults) => {
-      if (err) return res.status(500).json({ error: 'Database error 1' });
+      if (err) {
+        console.error('DB error fetching poll:', err);
+        return res.status(500).json({ error: 'Database error 1' });
+      }
 
-      if (pollResults.length === 0)
+      if (pollResults.length === 0) {
         return res.status(404).json({ error: 'Poll not found' });
+      }
 
       const poll = pollResults[0];
 
@@ -267,7 +271,7 @@ app.get('/poll-report/:poll_id/:company_id', (req, res) => {
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      // Get poll questions
+      // Pobierz pytania do ankiety
       connection.query(
         `SELECT pq.id AS question_poll_id, q.question AS question_name
          FROM poll_questions pq
@@ -275,8 +279,10 @@ app.get('/poll-report/:poll_id/:company_id', (req, res) => {
          WHERE pq.poll_id = ?`,
         [poll_id],
         (err, questionResults) => {
-          if (err) return res.status(500).json({ error: 'Database error 2', details: err.message });
-
+          if (err) {
+            console.error('DB error fetching poll questions:', err);
+            return res.status(500).json({ error: 'Database error 2', details: err.message });
+          }
 
           if (questionResults.length === 0) {
             return res.json({ poll, questions: [] });
@@ -284,38 +290,73 @@ app.get('/poll-report/:poll_id/:company_id', (req, res) => {
 
           const questionIds = questionResults.map(q => q.question_poll_id);
 
-          // Get vote counts per option
+          // Pobierz opcje przypisane do pytań przez questions_options
           connection.query(
             `SELECT 
-              v.question_poll_id,
-              o.label AS option_label,
-              COUNT(*) AS vote_count
-             FROM votes v
-             JOIN options o ON v.option_id = o.id
-             WHERE v.question_poll_id IN (?)
-             GROUP BY v.question_poll_id, v.option_id`,
+                o.id AS option_id, 
+                o.label, 
+                qo.question_id, 
+                pq.id AS question_poll_id
+             FROM options o
+             JOIN questions_options qo ON qo.option_id = o.id
+             JOIN poll_questions pq ON pq.question_id = qo.question_id
+             WHERE pq.id IN (?)`,
             [questionIds],
-            (err, voteResults) => {
-              if (err) return res.status(500).json({ error: 'Database error 3' });
+            (err, optionsResults) => {
+              if (err) {
+                console.error('DB error fetching options:', err);
+                return res.status(500).json({ error: 'Database error fetching options' });
+              }
 
-              const grouped = questionResults.map(q => {
-                const votesForQuestion = voteResults.filter(v => v.question_poll_id === q.question_poll_id);
-                const totalVotes = votesForQuestion.reduce((sum, v) => sum + v.vote_count, 0);
+              console.log('Options results:', optionsResults);
 
-                const results = votesForQuestion.map(v => ({
-                  label: v.option_label,
-                  count: v.vote_count,
-                  percentage: totalVotes > 0 ? Math.round((v.vote_count / totalVotes) * 100) : 0
-                }));
+              // Pobierz liczbę głosów na każdą opcję dla pytań
+              connection.query(
+                `SELECT v.question_poll_id, v.option_id, COUNT(*) AS vote_count
+                 FROM votes v
+                 WHERE v.question_poll_id IN (?)
+                 GROUP BY v.question_poll_id, v.option_id`,
+                [questionIds],
+                (err, voteResults) => {
+                  if (err) {
+                    console.error('DB error fetching votes:', err);
+                    return res.status(500).json({ error: 'Database error fetching votes' });
+                  }
 
-                return {
-                  question: q.question_name,
-                  results,
-                  totalVotes
-                };
-              });
+                  console.log('Vote results:', voteResults);
 
-              return res.json({ poll, questions: grouped });
+                  // Mapowanie głosów: votesMap[question_poll_id][option_id] = vote_count
+                  const votesMap = {};
+                  voteResults.forEach(vote => {
+                    if (!votesMap[vote.question_poll_id]) votesMap[vote.question_poll_id] = {};
+                    votesMap[vote.question_poll_id][vote.option_id] = vote.vote_count;
+                  });
+
+                  // Grupowanie odpowiedzi per pytanie
+                  const grouped = questionResults.map(q => {
+                    const optionsForQuestion = optionsResults.filter(o => o.question_poll_id === q.question_poll_id);
+
+                    const totalVotes = optionsForQuestion.reduce((sum, option) => {
+                      const count = votesMap[q.question_poll_id]?.[option.option_id] || 0;
+                      return sum + count;
+                    }, 0);
+
+                    const results = optionsForQuestion.map(option => ({
+                      label: option.label,
+                      count: votesMap[q.question_poll_id]?.[option.option_id] || 0,
+                      percentage: totalVotes > 0 ? Math.round(((votesMap[q.question_poll_id]?.[option.option_id] || 0) / totalVotes) * 100) : 0
+                    }));
+
+                    return {
+                      question: q.question_name,
+                      results,
+                      totalVotes
+                    };
+                  });
+
+                  return res.json({ poll, questions: grouped });
+                }
+              );
             }
           );
         }
@@ -323,6 +364,8 @@ app.get('/poll-report/:poll_id/:company_id', (req, res) => {
     }
   );
 });
+
+
 
 
 
